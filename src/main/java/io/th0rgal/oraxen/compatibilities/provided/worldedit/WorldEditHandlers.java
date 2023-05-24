@@ -20,9 +20,17 @@ import org.bukkit.block.data.BlockData;
 
 public class WorldEditHandlers {
 
-
+    // no-world-edit start
+    private static final boolean FORCE_DISABLED = true;
+    // no-world-edit end
 
     public WorldEditHandlers(boolean register) {
+        // no-world-edit start
+        if (FORCE_DISABLED) {
+            return;
+        }
+        // no-world-edit end
+
         if (register) {
             WorldEdit.getInstance().getEventBus().register(this);
         } else {
@@ -32,6 +40,7 @@ public class WorldEditHandlers {
 
     @Subscribe
     public void onEditSession(EditSessionEvent event) {
+
         if (event.getWorld() == null) return;
 
         event.setExtent(new AbstractDelegateExtent(event.getExtent()) {
