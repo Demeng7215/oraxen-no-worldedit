@@ -7,13 +7,14 @@ import io.th0rgal.oraxen.api.OraxenItems;
 import io.th0rgal.oraxen.api.events.OraxenNoteBlockInteractEvent;
 import io.th0rgal.oraxen.api.events.OraxenNoteBlockPlaceEvent;
 import io.th0rgal.oraxen.mechanics.MechanicFactory;
+import io.th0rgal.oraxen.mechanics.provided.gameplay.limitedplacing.LimitedPlacing;
 import io.th0rgal.oraxen.mechanics.provided.gameplay.noteblock.directional.DirectionalBlock;
+import io.th0rgal.oraxen.mechanics.provided.gameplay.storage.StorageMechanic;
 import io.th0rgal.oraxen.utils.BlockHelpers;
 import io.th0rgal.oraxen.utils.Utils;
+import io.th0rgal.oraxen.utils.VersionUtil;
 import io.th0rgal.oraxen.utils.breaker.BreakerSystem;
 import io.th0rgal.oraxen.utils.breaker.HardnessModifier;
-import io.th0rgal.oraxen.utils.limitedplacing.LimitedPlacing;
-import io.th0rgal.oraxen.utils.storage.StorageMechanic;
 import io.th0rgal.protectionlib.ProtectionLib;
 import org.bukkit.*;
 import org.bukkit.block.Block;
@@ -25,6 +26,7 @@ import org.bukkit.block.data.type.NoteBlock;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.FallingBlock;
 import org.bukkit.entity.Player;
+import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -49,7 +51,7 @@ public class NoteBlockMechanicListener implements Listener {
 
     public NoteBlockMechanicListener() {
         BreakerSystem.MODIFIERS.add(getHardnessModifier());
-        if (OraxenPlugin.get().isPaperServer)
+        if (VersionUtil.isPaperServer())
             Bukkit.getPluginManager().registerEvents(new NoteBlockMechanicPaperListener(), OraxenPlugin.get());
     }
 
@@ -98,7 +100,14 @@ public class NoteBlockMechanicListener implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBlockPhysics(final BlockPhysicsEvent event) {
         final Block aboveBlock = event.getBlock().getRelative(BlockFace.UP);
-        if (aboveBlock.getType() == Material.NOTE_BLOCK) {
+        final Block belowBlock = event.getBlock().getRelative(BlockFace.DOWN);
+        // If block below is NoteBlock, it will be affected by the break
+        // Call updateAndCheck from it to fix vertical stack of NoteBlocks
+        // if belowBlock is not a NoteBlock we must ensure the above is not, if it is call updateAndCheck from block
+        if (belowBlock.getType() == Material.NOTE_BLOCK) {
+            updateAndCheck(belowBlock.getLocation());
+            event.setCancelled(true);
+        } else if (aboveBlock.getType() == Material.NOTE_BLOCK) {
             updateAndCheck(event.getBlock().getLocation());
             event.setCancelled(true);
         }
@@ -141,15 +150,14 @@ public class NoteBlockMechanicListener implements Listener {
 
         if (item == null || block == null || event.getHand() != EquipmentSlot.HAND) return;
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
-        if (!event.getPlayer().isSneaking() && BlockHelpers.isInteractable(block)) return;
-
-        NoteBlockMechanic mechanic = (NoteBlockMechanic) factory.getMechanic(OraxenItems.getIdByItem(item));
+        NoteBlockMechanic mechanic = OraxenBlocks.getNoteBlockMechanic(OraxenItems.getIdByItem(item));
         if (mechanic == null || !mechanic.hasLimitedPlacing()) return;
+        if (!event.getPlayer().isSneaking() && BlockHelpers.isInteractable(block)) return;
 
         LimitedPlacing limitedPlacing = mechanic.getLimitedPlacing();
         Block belowPlaced = block.getRelative(blockFace).getRelative(BlockFace.DOWN);
 
-        if (limitedPlacing.isNotPlacableOn(belowPlaced, blockFace)) {
+        if (limitedPlacing.isNotPlacableOn(block, blockFace)) {
             event.setCancelled(true);
         } else if (limitedPlacing.getType() == LimitedPlacing.LimitedPlacingType.ALLOW) {
             if (!limitedPlacing.checkLimitedMechanic(belowPlaced))
@@ -165,7 +173,6 @@ public class NoteBlockMechanicListener implements Listener {
         Player player = event.getPlayer();
         Block block = event.getBlock();
         NoteBlockMechanic mechanic = event.getMechanic();
-        if (mechanic == null) return;
         if (!ProtectionLib.canInteract(player, block.getLocation())) return;
 
         if (!player.isSneaking()) {
@@ -195,8 +202,10 @@ public class NoteBlockMechanicListener implements Listener {
         Block block = event.getClickedBlock();
         Player player = event.getPlayer();
         ItemStack item = event.getItem();
+        EquipmentSlot hand = event.getHand();
+        BlockFace blockFace = event.getBlockFace();
 
-        if (event.getAction() != Action.RIGHT_CLICK_BLOCK || block == null || block.getType() != Material.NOTE_BLOCK) return;
+        if (hand == null || event.getAction() != Action.RIGHT_CLICK_BLOCK || block == null || block.getType() != Material.NOTE_BLOCK) return;
         if (!player.isSneaking() && BlockHelpers.isInteractable(block)) return;
 
         NoteBlockMechanic mechanic = OraxenBlocks.getNoteBlockMechanic(block);
@@ -204,13 +213,13 @@ public class NoteBlockMechanicListener implements Listener {
         if (mechanic.isDirectional() && !mechanic.getDirectional().isParentBlock())
             mechanic = mechanic.getDirectional().getParentMechanic();
 
-        OraxenNoteBlockInteractEvent noteBlockInteractEvent = new OraxenNoteBlockInteractEvent(mechanic, event.getPlayer(), event.getItem(), event.getHand(), block, event.getBlockFace());
+        OraxenNoteBlockInteractEvent noteBlockInteractEvent = new OraxenNoteBlockInteractEvent(mechanic, player, item, hand, block, blockFace);
         OraxenPlugin.get().getServer().getPluginManager().callEvent(noteBlockInteractEvent);
         event.setCancelled(true);
         if (noteBlockInteractEvent.isCancelled()) return;
         if (item == null) return;
 
-        Block relative = block.getRelative(event.getBlockFace());
+        Block relative = block.getRelative(blockFace);
         Material type = item.getType();
         if (type == Material.AIR) return;
         if (type == Material.BUCKET && relative.isLiquid()) {
@@ -266,11 +275,11 @@ public class NoteBlockMechanicListener implements Listener {
         final Block placedAgainst = event.getClickedBlock();
 
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK || placedAgainst == null) return;
-        if (factory.isNotImplementedIn(itemID)) return;
+        NoteBlockMechanic mechanic = OraxenBlocks.getNoteBlockMechanic(itemID);
+        if (mechanic == null) return;
         if (!player.isSneaking() && BlockHelpers.isInteractable(placedAgainst)) return;
 
         // determines the new block data of the block
-        NoteBlockMechanic mechanic = (NoteBlockMechanic) factory.getMechanic(itemID);
         int customVariation = mechanic.getCustomVariation();
         boolean isFalling = mechanic.isFalling();
         BlockFace face = event.getBlockFace();
@@ -293,6 +302,7 @@ public class NoteBlockMechanicListener implements Listener {
                 Location spawnLoc = BlockHelpers.toCenterBlockLocation(placedAgainst.getRelative(face).getLocation());
                 player.getWorld().spawnFallingBlock(spawnLoc, data);
             } //else OraxenBlocks.place(mechanic.getItemID(), placedBlock.getLocation());
+            event.setUseInteractedBlock(Event.Result.DENY);
         }
     }
 
@@ -314,12 +324,10 @@ public class NoteBlockMechanicListener implements Listener {
         final Block block = event.getBlock();
 
         NoteBlockMechanic mechanic = OraxenBlocks.getNoteBlockMechanic(block);
-        if (mechanic == null || !event.isDropItems()) return;
+        if (mechanic == null) return;
         if (OraxenBlocks.remove(block.getLocation(), event.getPlayer())) {
-            event.setCancelled(true);
-            return;
+            event.setDropItems(false);
         }
-        event.setDropItems(false);
     }
 
     @EventHandler
@@ -444,7 +452,7 @@ public class NoteBlockMechanicListener implements Listener {
                 if (mechanic.isDirectional() && !mechanic.getDirectional().isParentBlock())
                     mechanic = mechanic.getDirectional().getParentMechanic();
 
-                return mechanic.hasHardness;
+                return mechanic.hasHardness();
             }
 
             @Override
@@ -459,7 +467,7 @@ public class NoteBlockMechanicListener implements Listener {
                 if (mechanic.isDirectional() && !mechanic.getDirectional().isParentBlock())
                     mechanic = mechanic.getDirectional().getParentMechanic();
 
-                final long period = mechanic.getPeriod();
+                final long period = mechanic.getHardness();
                 double modifier = 1;
                 if (mechanic.getDrop().canDrop(tool)) {
                     modifier *= 0.4;

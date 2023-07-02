@@ -49,6 +49,10 @@ public class FurnitureFactory extends MechanicFactory {
         return instance;
     }
 
+    public static EvolutionTask getEvolutionTask() {
+        return evolutionTask;
+    }
+
     public void registerEvolution() {
         if (evolvingFurnitures)
             return;
@@ -57,6 +61,11 @@ public class FurnitureFactory extends MechanicFactory {
         evolutionTask = new EvolutionTask(this, evolutionCheckDelay);
         evolutionTask.runTaskTimer(OraxenPlugin.get(), 0, evolutionCheckDelay);
         evolvingFurnitures = true;
+    }
+
+    public static void unregisterEvolution() {
+        if (evolutionTask != null)
+            evolutionTask.cancel();
     }
 
 }
